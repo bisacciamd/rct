@@ -1,2 +1,2 @@
-# rct
-Randomized clinical trial appraisal tool
+# Randomized clinical trial appraisal tool
+The project output is an RCT assessment dashboard. Provided with information on two randomization arms, the dashboard yields useful metrics, including overall event rate, absolute and relative risk reduction, relative risk along with 95% confidence interval and P-value. The dashboard was developed as a Shiny integration to Quarto and can be accessed at [shinyapps.io](https://nweex5-g-bisaccia.shinyapps.io/rct-appraise/).
