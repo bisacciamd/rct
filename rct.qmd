@@ -1,0 +1,163 @@
+---
+title: "Randomized clinical trial appraisal"
+format: 
+  dashboard:
+    nav-buttons: [twitter, linkedin]
+    orientation: columns
+    scrolling: false
+logo: images/logo.png
+theme: superhero
+fig-width: 10
+fig-asp: 0.3
+editor_options: 
+  chunk_output_type: console
+server: shiny
+---
+
+```{r}
+#| context: setup
+#| label: load-packages
+#| message: false
+options(digits = 4)
+z_score <- qnorm(0.975)
+library(ggplot2)
+library(dplyr)
+library(bslib)
+library(bsicons)
+library(reactable)
+library(MKmisc)
+library(shinydashboard)
+library(echarts4r)
+theme_set(theme_light(base_size = 14, base_family = "Atkinson Hyperlegible"))
+```
+
+#  {.sidebar}
+
+```{r}
+#textInput('cond', 'Condition',value = 'CAD')
+
+textInput('arm1', 'Arm 1', value = 'Statin')
+textInput('arm2', 'Arm 2', value = 'Placebo')
+textInput('endpoint', 'Event type', value = 'Death')
+numericInput('sample1', paste('N. patients in arm 1'), value = 1000, min = 1, step = 1)
+numericInput('sample2', paste('N. patients in arm 2'), value = 1000, min = 1, step = 1)
+numericInput('event1', paste('N. events in arm 1'), value = 100, min = 1, step = 1)
+numericInput('event2', paste('N. events in arm 2'), value = 120, min = 1, step = 1)
+```
+
+::: {.callout-note collapse="true"}
+## Author
+
+Developed by G. Bisaccia, Gabriele D'Annunzio University of Chieti-Pescara, Chieti, Italy [ORCID](https://orcid.org/0000-0003-4606-3093)
+:::
+
+# Results
+
+## {.height="50%"}
+
+```{r}
+value_box(title="Overall event rate was",
+          value=textOutput("events"),
+          showcase = bs_icon("file-medical"), theme = "primary")
+```
+
+```{r}
+value_box(
+  title = "Absolute risk reduction",
+  value = textOutput("arr"),
+  showcase = bs_icon("arrow-down"), theme = "primary"
+)
+```
+
+```{r}
+value_box(
+  title = "Relative risk reduction",
+  value = textOutput("rrr"),
+  showcase =bs_icon("percent")
+)
+```
+
+```{r}
+value_box(
+  title = "Number needed to treat",
+  value = textOutput("nnt"),
+  showcase = bs_icon("person-raised-hand")
+)
+```
+
+## {.height="50%"}
+
+```{r .width="40%"}
+echarts4rOutput("plot")
+```
+
+```{r}
+tableOutput("results")
+```
+
+# About
+
+This dashboard allows to evaluate the design and results of a randomized controlled trial for binary outcomes. Provided with the number of patients and event counts in each of two arms, it calculates event rates, absolute and relative risk reduction, relative risk along with a 95%CI and P-value. Interpretation of randomized clinical trial results is discussed in a [JACC series](https://doi.org/10.1016/j.jacc.2015.10.014) by Prof. Pocock and colleagues. [BMJ Best Practice](https://bestpractice.bmj.com/info/us/toolkit/learn-ebm/how-to-calculate-risk/) also offers advice on the provided metrics.
+
+```{r}
+#| context: server
+output$events <- renderText({paste(round((input$event1+input$event2)/(input$sample1+input$sample2)*100, digits = 2), "%")})
+output$prop1 <- renderText({paste(round(input$event1/input$sample1*100, digits = 2), "%")})
+output$prop2 <- renderText({paste(round(input$event2/input$sample2*100, digits = 2), "%")})
+output$SE <- reactive(sqrt((1/input$event1)-(1/input$sample1)+(1/input$event2)-(1/input$sample2)))
+
+output$plot <- renderEcharts4r(data.frame(
+  prop=c(input$event1/input$sample1*100,input$event2/input$sample2*100),
+  arm=c(input$arm1, input$arm2)
+) %>% e_charts(arm) %>% e_bar(serie = prop) %>% e_theme("chalk") %>% e_legend(show = F) 
+%>% e_labels(position = "top") %>% 
+  e_axis_labels(x = "Arm", y = paste(input$endpoint, "rate (%)"))
+)
+
+output$arr <- renderText({paste(round(risks(p1 = input$event1/input$sample1, 
+                    p0 = input$event2/input$sample2)["ARR"]*100, digits = 2), "%")})
+
+output$rrr <- renderText({paste(round(risks(p1 = input$event1/input$sample1, 
+                    p0 = input$event2/input$sample2)["RRR"]*100, digits = 1), "%")})
+
+output$nnt <- renderText({round(risks(p1 = input$event1/input$sample1, 
+                    p0 = input$event2/input$sample2)["NNT"],digits = 0)})
+
+output$results <- renderTable({
+  # Calculate event rates
+  event_rates <- c(round(input$event1 / input$sample1 * 100, digits = 2),
+                   round(input$event2 / input$sample2 * 100, digits = 2)) %>% paste0("%")
+
+  # Calculate relative risk
+  RR <- input$event1 / input$sample1 / (input$event2 / input$sample2)
+
+  # Perform chi-squared test
+  chisq_result <- chisq.test(matrix(c(input$event1, input$event2, input$sample1 - input$event1, input$sample2 - input$event2), ncol = 2), correct = FALSE)
+
+  # Determine appropriate p-value based on expected cell counts
+  p_value <- ifelse(all(chisq_result$expected > 5), chisq_result$p.value, fisher.test(matrix(c(input$event1, input$event2, input$sample1 - input$event1, input$sample2 - input$event2), ncol = 2))$p.value)
+
+  # Calculate confidence interval
+  confidence_interval <- c(
+    lower = RR * exp(-z_score * sqrt((1 / input$event1) - (1 / input$sample1) + (1 / input$event2) - (1 / input$sample2))),
+    upper = RR * exp(z_score * sqrt((1 / input$event1) - (1 / input$sample1) + (1 / input$event2) - (1 / input$sample2)))
+  )
+
+  # Format p-value
+formatted_p_value <- case_when(
+  p_value < 0.0001 ~ '<0.0001', 
+  p_value >= 0.0001 & p_value < 0.001 ~ '<0.001',
+  p_value >= 0.001 & p_value < 0.01 ~ '<0.01',
+  p_value >= 0.01 ~ as.character(round(p_value, digits = 3))
+)
+
+  # Create the data frame
+  data.frame(
+    #events = event_rates,
+    RR = round(RR, digits = 2),
+    CI = paste(round(confidence_interval, digits = 2), collapse = " to "),
+    p.value = formatted_p_value
+  ) %>% rename("Relative risk"=RR, "95% Confidence interval"=CI, "P-value"=p.value)
+},striped = T, hover = T, bordered = T, colnames = T
+)
+```
